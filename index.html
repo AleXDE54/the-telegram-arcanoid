@@ -113,7 +113,8 @@ playBtn.style.backgroundColor = mainColor;
 let W = (canvas.width = window.innerWidth);
 let H = (canvas.height = window.innerHeight);
 
-// Game variables
+// === Игровые переменные ===
+let bottomOffset = 75; // ≈2 см отступ для пальца
 let paddleWidth = 150;
 let paddleHeight = 15;
 let paddleX = W / 2 - paddleWidth / 2;
@@ -135,7 +136,7 @@ let lives = 3;
 let paused = false;
 let gameRunning = false;
 
-// Levels
+// Уровни
 let level = 1;
 let bricks = [];
 let brickRows = 4;
@@ -146,8 +147,6 @@ let brickPadding = 10;
 let brickOffsetTop = 70;
 let brickOffsetLeft = 30;
 
-// ============================
-// INIT BRICKS
 // ============================
 function initBricks() {
   bricks = [];
@@ -161,11 +160,10 @@ function initBricks() {
 }
 
 // ============================
-// DRAW FUNCTIONS
-// ============================
 function drawPaddle() {
   ctx.fillStyle = mainColor;
-  ctx.roundRect(paddleX, H - paddleHeight - 10, paddleWidth, paddleHeight, 8);
+  ctx.beginPath();
+  ctx.roundRect(paddleX, H - bottomOffset - paddleHeight, paddleWidth, paddleHeight, 8);
   ctx.fill();
 }
 
@@ -187,8 +185,6 @@ function drawBricks() {
   });
 }
 
-// ============================
-// GAME LOGIC
 // ============================
 function draw() {
   ctx.clearRect(0, 0, W, H);
@@ -213,19 +209,19 @@ function update() {
 
   if (!isMoving) {
     ballX = paddleX + paddleWidth / 2;
-    ballY = H - paddleHeight - 10 - ballRadius - 2;
+    ballY = H - bottomOffset - paddleHeight - ballRadius - 2;
     return;
   }
 
   ballX += dx;
   ballY += dy;
 
-  // Wall collisions
+  // Отражения от стен
   if (ballX + ballRadius > W || ballX - ballRadius < 0) dx = -dx;
   if (ballY - ballRadius < 0) dy = -dy;
 
-  // Paddle collision (fixed)
-  const paddleTop = H - paddleHeight - 10;
+  // Коллизия с платформой
+  const paddleTop = H - bottomOffset - paddleHeight;
   if (ballY + ballRadius >= paddleTop && ballY + ballRadius <= paddleTop + 10) {
     if (ballX > paddleX && ballX < paddleX + paddleWidth) {
       ballY = paddleTop - ballRadius;
@@ -241,7 +237,7 @@ function update() {
     }
   }
 
-  // Brick collisions (improved)
+  // Столкновения с блоками
   bricks.forEach(b => {
     if (!b.alive) return;
     if (
@@ -250,10 +246,8 @@ function update() {
       ballY + ballRadius > b.y &&
       ballY - ballRadius < b.y + b.h
     ) {
-      // Determine side hit
       const overlapX = Math.min(ballX + ballRadius - b.x, b.x + b.w - (ballX - ballRadius));
       const overlapY = Math.min(ballY + ballRadius - b.y, b.y + b.h - (ballY - ballRadius));
-
       if (overlapX < overlapY) dx = -dx;
       else dy = -dy;
 
@@ -264,7 +258,7 @@ function update() {
     }
   });
 
-  // Lose life
+  // Потеря жизни
   if (ballY - ballRadius > H) {
     lives--;
     livesElem.textContent = lives;
@@ -272,14 +266,14 @@ function update() {
     else resetBall();
   }
 
-  // Check win
+  // Победа
   if (bricks.every(b => !b.alive)) nextLevel();
 }
 
 function resetBall() {
   isMoving = false;
   ballX = paddleX + paddleWidth / 2;
-  ballY = H - paddleHeight - 10 - ballRadius - 2;
+  ballY = H - bottomOffset - paddleHeight - ballRadius - 2;
   dx = 3;
   dy = -4;
 }
@@ -299,8 +293,6 @@ function nextLevel() {
   initBricks();
 }
 
-// ============================
-// CONTROLS
 // ============================
 document.addEventListener("keydown", e => {
   if (e.key === "ArrowRight") rightPressed = true;
