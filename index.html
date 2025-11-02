@@ -1,0 +1,388 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>Arcanoid — Telegram Web App</title>
+<script src="https://telegram.org/js/telegram-web-app.js?59"></script>
+<style>
+  :root{ --ui-padding:10px; }
+  html,body{ height:100%; margin:0; padding:0; font-family:Arial, Helvetica, sans-serif; -webkit-tap-highlight-color: transparent; }
+  body{ background:#1E1E2F; user-select:none; overflow:hidden; }
+  canvas{ display:block; width:100vw; height:100vh; background:#1E1E2F; }
+  #menu{ position:absolute; inset:0; display:flex; align-items:center; justify-content:center; z-index:20; flex-direction:column; gap:24px; }
+  #menu h1{ font-size:48px; margin:0; }
+  #playBtn{ font-size:20px; padding:12px 36px; border-radius:10px; background:transparent; cursor:pointer; border:2px solid #24A1DE; }
+  #ui{ position:absolute; top:0; left:0; right:0; display:flex; justify-content:space-between; align-items:center; padding:var(--ui-padding); gap:12px; z-index:15; box-sizing:border-box; color:#fff; }
+  #leftUi{ display:flex; gap:12px; align-items:center; }
+  #score{ font-weight:600; margin-left:6px; }
+  #lives{ font-size:18px; }
+  #pauseBtn{ cursor:pointer; border-radius:6px; padding:6px 10px; background:transparent; border:1px solid #fff; }
+  .hidden{ display:none !important; }
+</style>
+</head>
+<body>
+  <div id="menu">
+    <h1 id="menuTitle">Arcanoid</h1>
+    <button id="playBtn">Play!</button>
+  </div>
+
+  <div id="ui" class="hidden">
+    <div id="leftUi"><div>Очки:<span id="score">0</span></div></div>
+    <div id="rightUi" style="display:flex;gap:12px;align-items:center;">
+      <div id="lives">❤️❤️❤️</div>
+      <button id="pauseBtn">❚❚</button>
+    </div>
+  </div>
+
+  <canvas id="gameCanvas"></canvas>
+
+<script>
+(() => {
+  const canvas = document.getElementById('gameCanvas');
+  const ctx = canvas.getContext('2d', { alpha: false });
+  const menu = document.getElementById('menu');
+  const menuTitle = document.getElementById('menuTitle');
+  const playBtn = document.getElementById('playBtn');
+  const ui = document.getElementById('ui');
+  const scoreElem = document.getElementById('score');
+  const livesElem = document.getElementById('lives');
+  const pauseBtn = document.getElementById('pauseBtn');
+
+  // Hi-DPI resize
+  function resize(){
+    const dpr = window.devicePixelRatio || 1;
+    canvas.width = Math.floor(window.innerWidth * dpr);
+    canvas.height = Math.floor(window.innerHeight * dpr);
+    canvas.style.width = window.innerWidth + 'px';
+    canvas.style.height = window.innerHeight + 'px';
+    ctx.setTransform(dpr,0,0,dpr,0,0);
+    computeLayout();
+  }
+  window.addEventListener('resize', resize);
+
+  // theme colors (fallbacks)
+  let mainColor = "#24A1DE";
+  let bgColor = "#1E1E2F";
+  let textColor = "#FFFFFF";
+
+  if (window.Telegram && window.Telegram.WebApp && window.Telegram.WebApp.themeParams) {
+    const theme = window.Telegram.WebApp.themeParams;
+    mainColor = theme.button_color || mainColor;
+    bgColor = theme.bg_color || bgColor;
+    textColor = theme.button_text_color || textColor;
+  }
+  // apply theme to UI
+  document.body.style.background = bgColor;
+  canvas.style.background = bgColor;
+  menuTitle.style.color = textColor;
+  playBtn.style.borderColor = mainColor;
+  playBtn.style.color = mainColor;
+  pauseBtn.style.borderColor = textColor;
+  pauseBtn.style.color = textColor;
+  document.getElementById('ui').style.color = textColor;
+
+  // layout & game variables
+  let W = window.innerWidth, H = window.innerHeight;
+  let paddleWidth = 150, paddleHeight = 15, paddleX = 0;
+  let paddleSpeed = 0;
+  let ballRadius = 12, ballX = 0, ballY = 0;
+  const INITIAL_SPEED = 4;
+  let baseSpeed = INITIAL_SPEED;
+  let dx = baseSpeed, dy = -baseSpeed;
+
+  let brickRowCount = 5, brickColumnCount = 7;
+  let brickWidth = 0, brickHeight = 20, brickPadding = 6, brickOffsetTop = 100, brickOffsetLeft = 6;
+  const brickRadius = 6;
+  let bricks = [];
+
+  let score = 0, level = 1, lives = 3;
+  let isPaused = false, isMoving = false;
+  let animationId = null;
+  let floatingPoints = [];
+
+  function clamp(v, a, b){ return Math.max(a, Math.min(b, v)); }
+
+  function computeLayout(){
+    W = window.innerWidth; H = window.innerHeight;
+    paddleWidth = Math.min(260, Math.max(110, W * 0.22));
+    paddleHeight = 14;
+    paddleX = (W - paddleWidth) / 2;
+    ballRadius = Math.max(8, Math.min(14, W * 0.01));
+    brickColumnCount = Math.max(4, Math.min(10, Math.floor(W / 90)));
+    brickWidth = Math.floor((W - brickOffsetLeft*2 - (brickColumnCount-1)*brickPadding) / brickColumnCount);
+    brickHeight = 20;
+    brickOffsetTop = Math.max(80, H * 0.11);
+    // attach ball
+    ballX = paddleX + paddleWidth/2;
+    ballY = H - 60;
+  }
+
+  function initBricks(){
+    bricks = [];
+    for(let c=0;c<brickColumnCount;c++){
+      bricks[c] = [];
+      for(let r=0;r<brickRowCount;r++){
+        bricks[c][r] = { x:0, y:0, status:1 };
+      }
+    }
+  }
+
+  function resetVelocity(){
+    baseSpeed = INITIAL_SPEED;
+    dx = (Math.random() < 0.5 ? -1 : 1) * baseSpeed;
+    dy = -baseSpeed;
+  }
+
+  // drawing
+  function drawRoundedRect(x,y,w,h,r,color){
+    ctx.beginPath();
+    const radius = Math.min(r, w/2, h/2);
+    ctx.moveTo(x+radius,y);
+    ctx.lineTo(x+w-radius,y);
+    ctx.quadraticCurveTo(x+w,y,x+w,y+radius);
+    ctx.lineTo(x+w,y+h-radius);
+    ctx.quadraticCurveTo(x+w,y+h,x+w-radius,y+h);
+    ctx.lineTo(x+radius,y+h);
+    ctx.quadraticCurveTo(x,y+h,x,y+h-radius);
+    ctx.lineTo(x,y+radius);
+    ctx.quadraticCurveTo(x,y,x+radius,y);
+    ctx.fillStyle = color;
+    ctx.fill();
+    ctx.closePath();
+  }
+
+  function drawBall(){ ctx.beginPath(); ctx.arc(ballX, ballY, ballRadius, 0, Math.PI*2); ctx.fillStyle = mainColor; ctx.fill(); ctx.closePath(); }
+  function drawPaddle(){ drawRoundedRect(paddleX, H - paddleHeight - 10, paddleWidth, paddleHeight, 6, mainColor); }
+
+  function drawBricks(){
+    for(let c=0;c<brickColumnCount;c++){
+      for(let r=0;r<brickRowCount;r++){
+        const b = bricks[c][r];
+        if(b && b.status === 1){
+          const bx = brickOffsetLeft + c*(brickWidth + brickPadding);
+          const by = brickOffsetTop + r*(brickHeight + brickPadding);
+          b.x = bx; b.y = by;
+          drawRoundedRect(bx, by, brickWidth, brickHeight, brickRadius, mainColor);
+        }
+      }
+    }
+  }
+
+  function drawFloatingPoints(){
+    for(let i=floatingPoints.length-1;i>=0;i--){
+      const p = floatingPoints[i];
+      ctx.save();
+      ctx.globalAlpha = Math.max(0,p.alpha);
+      ctx.fillStyle = textColor;
+      ctx.font = "16px Arial";
+      ctx.textAlign = "center";
+      ctx.fillText("+" + p.value, p.x, p.y);
+      ctx.restore();
+      p.y -= 1.5;
+      p.alpha -= 0.02;
+      if(p.alpha <= 0) floatingPoints.splice(i,1);
+    }
+  }
+
+  // improved sub-stepped movement + robust collisions
+  function loop(){
+    if(isPaused) return;
+    ctx.clearRect(0,0,W,H);
+    drawBricks();
+    drawPaddle();
+    drawBall();
+    drawFloatingPoints();
+
+    if(isMoving){
+      // number of micro-steps proportional to travel distance to avoid tunneling
+      const travel = Math.hypot(dx, dy);
+      const stepCount = Math.max(1, Math.ceil(travel / (ballRadius * 0.8)));
+      const stepDx = dx / stepCount;
+      const stepDy = dy / stepCount;
+
+      for(let s=0; s<stepCount; s++){
+        let nx = ballX + stepDx;
+        let ny = ballY + stepDy;
+
+        // WALL collisions (left/right/top)
+        if(nx > W - ballRadius){
+          nx = W - ballRadius;
+          dx = -Math.abs(dx);
+        } else if(nx < ballRadius){
+          nx = ballRadius;
+          dx = Math.abs(dx);
+        }
+        if(ny < ballRadius){
+          ny = ballRadius;
+          dy = Math.abs(dy);
+        }
+
+        // PADDLE collision detection (using next pos)
+        const paddleTop = H - paddleHeight - 10;
+        if(ny + ballRadius >= paddleTop && ballY + ballRadius <= paddleTop + 2){ // approaching from above
+          if(nx > paddleX && nx < paddleX + paddleWidth){
+            // snap ball above paddle
+            ny = paddleTop - ballRadius;
+            // compute impact and re-calc velocities preserving speed magnitude
+            const impact = (nx - (paddleX + paddleWidth/2)) / (paddleWidth/2); // -1..1
+            const speedMag = Math.max(2, Math.hypot(dx, dy));
+            dx = (impact * 2 + (paddleSpeed * 0.02)) * speedMag;
+            const maxDx = speedMag * 1.6;
+            dx = clamp(dx, -maxDx, maxDx);
+            dy = -Math.abs(Math.sqrt(Math.max(0.5, speedMag*speedMag - dx*dx)));
+            // update micro-step components to match new dx/dy
+            // important: break micro-step loop? we'll continue movement with new dx/dy next iterations
+          }
+        }
+
+        // BRICK collisions: check circle-rect collision for each brick using nx,ny
+        outer:
+        for(let c=0;c<brickColumnCount;c++){
+          for(let r=0;r<brickRowCount;r++){
+            const b = bricks[c][r];
+            if(!b || b.status !== 1) continue;
+            const rx = b.x, ry = b.y, rw = brickWidth, rh = brickHeight;
+            // find closest point on rect to circle center
+            const closestX = clamp(nx, rx, rx + rw);
+            const closestY = clamp(ny, ry, ry + rh);
+            const distX = nx - closestX;
+            const distY = ny - closestY;
+            const dist2 = distX*distX + distY*distY;
+            if(dist2 <= (ballRadius * ballRadius) + 0.0001){
+              // collision occured — decide whether to reflect horizontally or vertically
+              // If absolute penetration in X > Y -> side collision -> flip dx, else flip dy
+              if(Math.abs(distX) > Math.abs(distY)){
+                dx = -dx;
+              } else {
+                dy = -dy;
+              }
+              // mark destroyed
+              b.status = 0;
+              // award points
+              const points = Math.floor(Math.random()*11) + 5;
+              score += points;
+              scoreElem.textContent = score;
+              floatingPoints.push({ x: rx + rw/2, y: ry + rh/2, value: points, alpha: 1 });
+              // level check
+              const remaining = bricks.flat().filter(bb => bb && bb.status === 1).length;
+              if(remaining === 0){
+                level++;
+                baseSpeed *= 1.15;
+                // adjust speeds to new magnitude but keep signs
+                const signX = Math.sign(dx) || 1;
+                dx = signX * Math.max(2, baseSpeed);
+                dy = -Math.abs(baseSpeed);
+                initBricks();
+              }
+              // After handling one brick collision, break to avoid double collisions in same micro-step
+              break outer;
+            }
+          }
+        }
+
+        // missed paddle -> lose life if below bottom
+        if(ny - ballRadius > H){
+          // lose life and reset ball to paddle (handled in loseLifeReset)
+          loseLifeReset();
+          break; // stop micro-steps because state changed
+        }
+
+        // apply micro-step
+        ballX = nx;
+        ballY = ny;
+      } // end micro-steps
+    } else {
+      // ball attached to paddle
+      ballX = paddleX + paddleWidth/2;
+      ballY = H - 60;
+    }
+
+    animationId = requestAnimationFrame(loop);
+  }
+
+  function updateLivesUI(){ livesElem.textContent = "❤️".repeat(Math.max(0, lives)); }
+
+  function loseLifeReset(){
+    lives--;
+    if(lives <= 0){
+      // full game over reset
+      alert(`Game Over! Ваш счет: ${score}`);
+      score = 0;
+      level = 1;
+      lives = 3;
+      scoreElem.textContent = score;
+      updateLivesUI();
+      initBricks();
+      resetVelocity();
+      isMoving = false;
+      paddleX = (W - paddleWidth) / 2;
+      paddleSpeed = 0;
+    } else {
+      // reset ball attached to paddle and reset velocity magnitude
+      resetVelocity();
+      isMoving = false;
+      ballX = paddleX + paddleWidth/2;
+      ballY = H - 60;
+      paddleSpeed = 0;
+      updateLivesUI();
+    }
+  }
+
+  // input
+  function setPaddleFromX(clientX){
+    const rect = canvas.getBoundingClientRect();
+    const relX = clientX - rect.left;
+    const newX = relX - paddleWidth/2;
+    paddleSpeed = newX - paddleX;
+    paddleX = clamp(newX, 0, W - paddleWidth);
+  }
+
+  canvas.addEventListener('mousemove', (e) => {
+    setPaddleFromX(e.clientX);
+    if(!isMoving) isMoving = true;
+  });
+
+  canvas.addEventListener('touchmove', (e) => {
+    const t = e.touches[0];
+    setPaddleFromX(t.clientX);
+    if(!isMoving) isMoving = true;
+    e.preventDefault();
+  }, { passive: false });
+
+  // pause
+  pauseBtn.addEventListener('click', () => {
+    isPaused = !isPaused;
+    if(!isPaused){
+      cancelAnimationFrame(animationId);
+      loop();
+    } else cancelAnimationFrame(animationId);
+  });
+
+  // play
+  playBtn.addEventListener('click', () => {
+    menu.classList.add('hidden');
+    ui.classList.remove('hidden');
+    score = 0; scoreElem.textContent = score;
+    lives = 3; updateLivesUI();
+    level = 1;
+    computeLayout();
+    initBricks();
+    resetVelocity();
+    isMoving = false;
+    cancelAnimationFrame(animationId);
+    loop();
+  });
+
+  // init
+  resize();
+  computeLayout();
+  initBricks();
+  resetVelocity();
+  updateLivesUI();
+  menuTitle.style.color = textColor;
+
+})();
+</script>
+</body>
+</html>
