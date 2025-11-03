@@ -1,344 +1,449 @@
 <!DOCTYPE html>
 <html lang="ru">
 <head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Arcanoid Telegram</title>
-<script src="https://telegram.org/js/telegram-web-app.js?59"></script>
-<style>
-  html, body {
-    margin: 0;
-    padding: 0;
-    overflow: hidden;
-    font-family: Arial, sans-serif;
-    background-color: #1e2732;
-    color: white;
-    user-select: none;
-  }
-  canvas {
-    display: block;
-    background-color: #1e2732;
-  }
-  #ui {
-    position: absolute;
-    top: 0;
-    left: 0;
-    width: 100%;
-    padding: 6px 12px;
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    font-size: 18px;
-    color: white;
-    z-index: 2;
-  }
-  #pauseBtn {
-    cursor: pointer;
-    background: none;
-    border: none;
-    color: white;
-    font-size: 22px;
-  }
-  #menu {
-    position: absolute;
-    top: 0; left: 0;
-    width: 100%; height: 100%;
-    background: rgba(20, 30, 40, 0.95);
-    display: flex;
-    flex-direction: column;
-    justify-content: center;
-    align-items: center;
-    gap: 20px;
-    z-index: 3;
-  }
-  #menu h1 {
-    font-size: 48px;
-    font-weight: bold;
-    color: white;
-  }
-  #playBtn {
-    font-size: 22px;
-    padding: 10px 30px;
-    border-radius: 12px;
-    border: none;
-    cursor: pointer;
-    background-color: #24A1DE;
-    color: white;
-    transition: 0.2s;
-  }
-  #playBtn:hover {
-    transform: scale(1.05);
-    background-color: #2bb6f3;
-  }
-</style>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+  <title>Arkanoid Mini</title>
+  <script src="https://unpkg.com/@telegram-apps/sdk@7.5.0/dist/web.js"></script>
+  <style>
+    body {
+      margin: 0;
+      padding: 0;
+      overflow: hidden;
+      background: #111;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      height: 100vh;
+      font-family: Arial, sans-serif;
+      color: white;
+    }
+    canvas {
+      border: 1px solid #333;
+      background: #000;
+    }
+    #ui {
+      position: absolute;
+      top: 10px;
+      left: 10px;
+      font-size: 16px;
+      pointer-events: none;
+    }
+    #menu, #game {
+      position: absolute;
+      display: flex;
+      flex-direction: column;
+      gap: 20px;
+      align-items: center;
+      justify-content: center;
+      width: 100%;
+      height: 100%;
+      background: #0f0f15;
+    }
+    button {
+      padding: 12px 24px;
+      font-size: 18px;
+      background: #4CAF50;
+      color: white;
+      border: none;
+      border-radius: 8px;
+      cursor: pointer;
+    }
+    button:hover { background: #45a049; }
+  </style>
 </head>
 <body>
-<div id="ui" style="display:none;">
-  <div>Очки: <span id="score">0</span> | Жизни: <span id="lives">3</span></div>
-  <button id="pauseBtn">⏸</button>
-</div>
+  <div id="menu">
+    <h1>Arkanoid Mini</h1>
+    <button id="btn-levels">Кампания</button>
+    <button id="btn-endless">Бесконечный режим</button>
+    <div id="best-score"></div>
+  </div>
 
-<div id="menu">
-  <h1>Arcanoid</h1>
-  <button id="playBtn">Play</button>
-</div>
+  <div id="game" style="display: none;">
+    <canvas id="arkanoid" width="400" height="600"></canvas>
+    <div id="ui">Счёт: <span id="score">0</span> | Жизни: <span id="lives">3</span></div>
+  </div>
 
-<canvas id="gameCanvas"></canvas>
+  <script>
+    // === Telegram SDK ===
+    const tg = window.Telegram?.WebApp;
+    tg?.ready();
 
-<script>
-const canvas = document.getElementById('gameCanvas');
-const ctx = canvas.getContext('2d');
-const scoreElem = document.getElementById('score');
-const livesElem = document.getElementById('lives');
-const ui = document.getElementById('ui');
-const menu = document.getElementById('menu');
-const playBtn = document.getElementById('playBtn');
-const pauseBtn = document.getElementById('pauseBtn');
-
-// Telegram theme colors
-let theme = Telegram?.WebApp?.themeParams || {};
-let mainColor = theme.button_color || "#24A1DE";
-let bgColor = theme.bg_color || "#1e2732";
-let textColor = theme.text_color || "#ffffff";
-
-document.body.style.backgroundColor = bgColor;
-canvas.style.backgroundColor = bgColor;
-menu.style.backgroundColor = bgColor;
-menu.querySelector("h1").style.color = textColor;
-ui.style.color = textColor;
-pauseBtn.style.color = textColor;
-playBtn.style.backgroundColor = mainColor;
-
-// Canvas size
-let W = (canvas.width = window.innerWidth);
-let H = (canvas.height = window.innerHeight);
-
-// === Игровые переменные ===
-let bottomOffset = 75; // ≈2 см отступ для пальца
-let paddleWidth = 150;
-let paddleHeight = 15;
-let paddleX = W / 2 - paddleWidth / 2;
-let paddleSpeed = 0;
-let oldPaddleX = paddleX;
-
-let ballRadius = 10;
-let ballX = W / 2;
-let ballY = H / 2;
-let dx = 3, dy = -4;
-
-let rightPressed = false;
-let leftPressed = false;
-let touchX = null;
-let isMoving = false;
-
-let score = 0;
-let lives = 3;
-let paused = false;
-let gameRunning = false;
-
-// Уровни
-let level = 1;
-let bricks = [];
-let brickRows = 4;
-let brickCols = 7;
-let brickWidth = 80;
-let brickHeight = 25;
-let brickPadding = 10;
-let brickOffsetTop = 70;
-let brickOffsetLeft = 30;
-
-// ============================
-function initBricks() {
-  bricks = [];
-  for (let r = 0; r < brickRows; r++) {
-    for (let c = 0; c < brickCols; c++) {
-      const brickX = brickOffsetLeft + c * (brickWidth + brickPadding);
-      const brickY = brickOffsetTop + r * (brickHeight + brickPadding);
-      bricks.push({ x: brickX, y: brickY, w: brickWidth, h: brickHeight, alive: true });
+    let userId = 'guest';
+    if (tg?.initDataUnsafe?.user?.id) {
+      userId = String(tg.initDataUnsafe.user.id);
+      console.log('User ID:', userId);
     }
-  }
-}
 
-// ============================
-function drawPaddle() {
-  ctx.fillStyle = mainColor;
-  ctx.beginPath();
-  ctx.roundRect(paddleX, H - bottomOffset - paddleHeight, paddleWidth, paddleHeight, 8);
-  ctx.fill();
-}
+    // === Сохранение прогресса ===
+    const saveKey = `arkanoid_${userId}`;
+    let progress = JSON.parse(localStorage.getItem(saveKey) || JSON.stringify({
+      bestEndlessScore: 0,
+      maxLevel: 0
+    }));
 
-function drawBall() {
-  ctx.beginPath();
-  ctx.arc(ballX, ballY, ballRadius, 0, Math.PI * 2);
-  ctx.fillStyle = mainColor;
-  ctx.fill();
-}
+    // === UI ===
+    document.getElementById('best-score').innerText = `Лучший счёт: ${progress.bestEndlessScore}`;
 
-function drawBricks() {
-  ctx.fillStyle = mainColor;
-  bricks.forEach(b => {
-    if (b.alive) {
+    // === Игровые переменные ===
+    let gameState = 'menu'; // 'menu', 'levels', 'endless', 'playing'
+    let score = 0;
+    let lives = 3;
+    let level = 1;
+    let isEndless = false;
+
+    const canvas = document.getElementById('arkanoid');
+    const ctx = canvas.getContext('2d');
+    const menu = document.getElementById('menu');
+    const gameDiv = document.getElementById('game');
+
+    // === Платформа ===
+    const platform = {
+      width: 80,
+      height: 15,
+      x: canvas.width / 2 - 40,
+      y: canvas.height - 30,
+      speed: 8,
+      originalWidth: 80
+    };
+
+    // === Мяч ===
+    const ball = {
+      x: canvas.width / 2,
+      y: canvas.height - 50,
+      dx: 4,
+      dy: -4,
+      radius: 8,
+      ghost: false,
+      slow: false
+    };
+
+    let bricks = [];
+    const brickRows = 5;
+    const brickCols = 10;
+    const brickWidth = 35;
+    const brickHeight = 20;
+    const brickPadding = 5;
+    const brickOffsetTop = 60;
+    const brickOffsetLeft = 30;
+
+    const powerUps = [];
+    const activeEffects = {
+      bigPaddle: 0,
+      slowTime: 0,
+      ghostBall: 0
+    };
+
+    // === Уровни ===
+    function createLevel(lvl) {
+      bricks = [];
+      const types = ['normal', 'normal', 'normal', 'power'];
+      for (let r = 0; r < brickRows; r++) {
+        for (let c = 0; c < brickCols; c++) {
+          const type = types[Math.floor(Math.random() * types.length)];
+          bricks.push({
+            x: c * (brickWidth + brickPadding) + brickOffsetLeft,
+            y: r * (brickHeight + brickPadding) + brickOffsetTop,
+            width: brickWidth,
+            height: brickHeight,
+            status: true,
+            type: type // 'normal' or 'power'
+          });
+        }
+      }
+      if (lvl === 1) {
+        // Первый уровень — все блоки обычные
+        bricks.forEach(b => b.type = 'normal');
+      }
+    }
+
+    function createEndlessLevel() {
+      bricks = [];
+      const rows = 3 + Math.min(6, Math.floor(score / 50)); // растущая сложность
+      for (let r = 0; r < rows; r++) {
+        for (let c = 0; c < brickCols; c++) {
+          if (Math.random() > 0.3) {
+            bricks.push({
+              x: c * (brickWidth + brickPadding) + brickOffsetLeft,
+              y: r * (brickHeight + brickPadding) + brickOffsetTop,
+              width: brickWidth,
+              height: brickHeight,
+              status: true,
+              type: Math.random() > 0.7 ? 'power' : 'normal'
+            });
+          }
+        }
+      }
+    }
+
+    // === Бонусы ===
+    const powerUpTypes = ['big_paddle', 'slow_time', 'extra_life', 'ghost_ball', 'multi_ball'];
+
+    function dropPowerUp(x, y) {
+      if (Math.random() < 0.3) {
+        const type = powerUpTypes[Math.floor(Math.random() * powerUpTypes.length)];
+        powerUps.push({ x, y, dx: 0, dy: 2, type, width: 20, height: 20 });
+      }
+    }
+
+    function applyPowerUp(type) {
+      switch (type) {
+        case 'big_paddle':
+          platform.width = 140;
+          activeEffects.bigPaddle = Date.now() + 5000;
+          break;
+        case 'slow_time':
+          ball.slow = true;
+          activeEffects.slowTime = Date.now() + 5000;
+          break;
+        case 'extra_life':
+          lives++;
+          break;
+        case 'ghost_ball':
+          ball.ghost = true;
+          activeEffects.ghostBall = Date.now() + 5000;
+          break;
+        case 'multi_ball':
+          // Добавим 2 мяча (упрощённо — просто разные направления)
+          // В реальном проекте — массив мячей
+          break;
+      }
+    }
+
+    // === Коллизии ===
+    function collisionDetection() {
+      bricks.forEach((brick, index) => {
+        if (brick.status) {
+          if (
+            ball.x + ball.radius > brick.x &&
+            ball.x - ball.radius < brick.x + brick.width &&
+            ball.y + ball.radius > brick.y &&
+            ball.y - ball.radius < brick.y + brick.height
+          ) {
+            if (!ball.ghost) {
+              ball.dy = -ball.dy;
+            }
+            brick.status = false;
+            score += 10;
+            if (brick.type === 'power') {
+              dropPowerUp(brick.x + brick.width/2, brick.y + brick.height);
+            }
+          }
+        }
+      });
+    }
+
+    // === Обновление эффектов ===
+    function updateEffects() {
+      const now = Date.now();
+      if (activeEffects.bigPaddle < now && platform.width !== platform.originalWidth) {
+        platform.width = platform.originalWidth;
+      }
+      if (activeEffects.slowTime < now) {
+        ball.slow = false;
+      }
+      if (activeEffects.ghostBall < now) {
+        ball.ghost = false;
+      }
+    }
+
+    // === Отображение ===
+    function draw() {
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+      // Платформа
+      ctx.fillStyle = '#4CAF50';
+      ctx.fillRect(platform.x, platform.y, platform.width, platform.height);
+
+      // Мяч
       ctx.beginPath();
-      ctx.roundRect(b.x, b.y, b.w, b.h, 6);
+      ctx.arc(ball.x, ball.y, ball.radius, 0, Math.PI * 2);
+      ctx.fillStyle = ball.ghost ? '#9c27b0' : '#ff5722';
       ctx.fill();
+      ctx.closePath();
+
+      // Блоки
+      bricks.forEach(brick => {
+        if (brick.status) {
+          ctx.fillStyle = brick.type === 'power' ? '#ff9800' : '#2196F3';
+          ctx.fillRect(brick.x, brick.y, brick.width, brick.height);
+          ctx.strokeStyle = '#fff';
+          ctx.strokeRect(brick.x, brick.y, brick.width, brick.height);
+        }
+      });
+
+      // Бонусы
+      powerUps.forEach((pu, i) => {
+        pu.y += pu.dy;
+        ctx.fillStyle = '#e91e63';
+        ctx.fillRect(pu.x - pu.width/2, pu.y, pu.width, pu.height);
+
+        // Сбор бонуса
+        if (
+          pu.y + pu.height > platform.y &&
+          pu.x > platform.x &&
+          pu.x < platform.x + platform.width
+        ) {
+          applyPowerUp(pu.type);
+          powerUps.splice(i, 1);
+        }
+      });
+
+      // UI
+      document.getElementById('score').innerText = score;
+      document.getElementById('lives').innerText = lives;
     }
-  });
-}
 
-// ============================
-function draw() {
-  ctx.clearRect(0, 0, W, H);
-  drawBricks();
-  drawPaddle();
-  drawBall();
-}
+    // === Логика игры ===
+    function update() {
+      if (gameState !== 'playing') return;
 
-function update() {
-  if (paused || !gameRunning) return;
+      // Скорость мяча
+      let speedFactor = ball.slow ? 0.5 : 1;
+      ball.x += ball.dx * speedFactor;
+      ball.y += ball.dy * speedFactor;
 
-  oldPaddleX = paddleX;
+      // Стены
+      if (ball.x + ball.radius > canvas.width || ball.x - ball.radius < 0) ball.dx = -ball.dx;
+      if (ball.y - ball.radius < 0) ball.dy = -ball.dy;
+      if (ball.y + ball.radius > canvas.height) {
+        lives--;
+        if (lives <= 0) {
+          endGame();
+        } else {
+          resetBall();
+        }
+      }
 
-  if (rightPressed) paddleX += 6;
-  if (leftPressed) paddleX -= 6;
-  if (touchX !== null) {
-    paddleX += (touchX - (paddleX + paddleWidth / 2)) * 0.25;
-  }
+      // Платформа
+      if (
+        ball.y + ball.radius > platform.y &&
+        ball.x > platform.x &&
+        ball.x < platform.x + platform.width &&
+        ball.dy > 0
+      ) {
+        ball.dy = -ball.dy;
+        // Эффект отскока от краёв платформы
+        const hitPos = (ball.x - platform.x) / platform.width;
+        ball.dx = 6 * (hitPos - 0.5); // от -3 до +3
+      }
 
-  paddleSpeed = paddleX - oldPaddleX;
-  paddleX = Math.max(0, Math.min(W - paddleWidth, paddleX));
+      collisionDetection();
+      updateEffects();
 
-  if (!isMoving) {
-    ballX = paddleX + paddleWidth / 2;
-    ballY = H - bottomOffset - paddleHeight - ballRadius - 2;
-    return;
-  }
+      // Проверка победы
+      const allBroken = bricks.every(b => !b.status);
+      if (allBroken) {
+        if (isEndless) {
+          score += 100;
+          createEndlessLevel();
+        } else {
+          if (level >= 5) {
+            // Победа
+            alert('Победа! Кампания пройдена!');
+            if (level > progress.maxLevel) progress.maxLevel = level;
+            saveProgress();
+            gameState = 'menu';
+            menu.style.display = 'flex';
+            gameDiv.style.display = 'none';
+          } else {
+            level++;
+            createLevel(level);
+            resetBall();
+          }
+        }
+      }
 
-  ballX += dx;
-  ballY += dy;
-
-  // Отражения от стен
-  if (ballX + ballRadius > W || ballX - ballRadius < 0) dx = -dx;
-  if (ballY - ballRadius < 0) dy = -dy;
-
-  // Коллизия с платформой
-  const paddleTop = H - bottomOffset - paddleHeight;
-  if (ballY + ballRadius >= paddleTop && ballY + ballRadius <= paddleTop + 10) {
-    if (ballX > paddleX && ballX < paddleX + paddleWidth) {
-      ballY = paddleTop - ballRadius;
-      const impact = (ballX - (paddleX + paddleWidth / 2)) / (paddleWidth / 2);
-      const speedMag = Math.max(3, Math.hypot(dx, dy));
-      const maxAngle = (75 * Math.PI) / 180;
-      const angle = impact * maxAngle;
-      dx = speedMag * Math.sin(angle) + paddleSpeed * 0.05;
-      dy = -Math.abs(speedMag * Math.cos(angle));
-      const norm = Math.hypot(dx, dy);
-      dx = (dx / norm) * speedMag;
-      dy = (dy / norm) * speedMag;
+      draw();
+      requestAnimationFrame(update);
     }
-  }
 
-  // Столкновения с блоками
-  bricks.forEach(b => {
-    if (!b.alive) return;
-    if (
-      ballX + ballRadius > b.x &&
-      ballX - ballRadius < b.x + b.w &&
-      ballY + ballRadius > b.y &&
-      ballY - ballRadius < b.y + b.h
-    ) {
-      const overlapX = Math.min(ballX + ballRadius - b.x, b.x + b.w - (ballX - ballRadius));
-      const overlapY = Math.min(ballY + ballRadius - b.y, b.y + b.h - (ballY - ballRadius));
-      if (overlapX < overlapY) dx = -dx;
-      else dy = -dy;
-
-      b.alive = false;
-      const pts = 5 + Math.floor(Math.random() * 11);
-      score += pts;
-      scoreElem.textContent = score;
+    function resetBall() {
+      ball.x = platform.x + platform.width / 2;
+      ball.y = platform.y - ball.radius;
+      ball.dx = 4;
+      ball.dy = -4;
     }
-  });
 
-  // Потеря жизни
-  if (ballY - ballRadius > H) {
-    lives--;
-    livesElem.textContent = lives;
-    if (lives <= 0) gameOver();
-    else resetBall();
-  }
+    function startGame(endless = false) {
+      isEndless = endless;
+      gameState = 'playing';
+      score = 0;
+      lives = 3;
+      level = 1;
+      platform.x = canvas.width / 2 - platform.width / 2;
 
-  // Победа
-  if (bricks.every(b => !b.alive)) nextLevel();
-}
+      if (endless) {
+        createEndlessLevel();
+      } else {
+        createLevel(level);
+      }
 
-function resetBall() {
-  isMoving = false;
-  ballX = paddleX + paddleWidth / 2;
-  ballY = H - bottomOffset - paddleHeight - ballRadius - 2;
-  dx = 3;
-  dy = -4;
-}
+      resetBall();
+      powerUps.length = 0;
+      Object.keys(activeEffects).forEach(k => activeEffects[k] = 0);
+      platform.width = platform.originalWidth;
 
-function gameOver() {
-  gameRunning = false;
-  ui.style.display = "none";
-  menu.style.display = "flex";
-  menu.querySelector("h1").textContent = "Game Over";
-  playBtn.textContent = "Play Again";
-}
+      menu.style.display = 'none';
+      gameDiv.style.display = 'block';
 
-function nextLevel() {
-  level++;
-  brickRows++;
-  resetBall();
-  initBricks();
-}
+      update();
+    }
 
-// ============================
-document.addEventListener("keydown", e => {
-  if (e.key === "ArrowRight") rightPressed = true;
-  if (e.key === "ArrowLeft") leftPressed = true;
-});
-document.addEventListener("keyup", e => {
-  if (e.key === "ArrowRight") rightPressed = false;
-  if (e.key === "ArrowLeft") leftPressed = false;
-});
-canvas.addEventListener("touchstart", e => {
-  touchX = e.touches[0].clientX;
-  isMoving = true;
-});
-canvas.addEventListener("touchmove", e => {
-  touchX = e.touches[0].clientX;
-  isMoving = true;
-});
-canvas.addEventListener("touchend", () => {
-  touchX = null;
-  isMoving = false;
-});
-pauseBtn.addEventListener("click", () => paused = !paused);
-playBtn.addEventListener("click", startGame);
+    function endGame() {
+      gameState = 'menu';
+      if (isEndless) {
+        if (score > progress.bestEndlessScore) {
+          progress.bestEndlessScore = score;
+          saveProgress();
+          document.getElementById('best-score').innerText = `Лучший счёт: ${progress.bestEndlessScore}`;
+        }
+      }
+      menu.style.display = 'flex';
+      gameDiv.style.display = 'none';
+      alert('Игра окончена! Счёт: ' + score);
+    }
 
-function startGame() {
-  menu.style.display = "none";
-  ui.style.display = "flex";
-  score = 0;
-  lives = 3;
-  level = 1;
-  initBricks();
-  resetBall();
-  gameRunning = true;
-  paused = false;
-  menu.querySelector("h1").textContent = "Arcanoid";
-  playBtn.textContent = "Play";
-}
+    function saveProgress() {
+      localStorage.setItem(saveKey, JSON.stringify(progress));
+    }
 
-function loop() {
-  update();
-  draw();
-  requestAnimationFrame(loop);
-}
+    // === Ввод ===
+    let isTouch = false;
+    canvas.addEventListener('touchstart', e => {
+      isTouch = true;
+      e.preventDefault();
+    });
+    canvas.addEventListener('touchmove', e => {
+      if (!isTouch) return;
+      const touch = e.touches[0];
+      const rect = canvas.getBoundingClientRect();
+      const x = touch.clientX - rect.left;
+      platform.x = x - platform.width / 2;
+      if (platform.x < 0) platform.x = 0;
+      if (platform.x + platform.width > canvas.width) platform.x = canvas.width - platform.width;
+      e.preventDefault();
+    });
+    canvas.addEventListener('touchend', () => {
+      isTouch = false;
+    });
 
-initBricks();
-loop();
-</script>
+    canvas.addEventListener('mousemove', e => {
+      if (isTouch) return;
+      const rect = canvas.getBoundingClientRect();
+      const x = e.clientX - rect.left;
+      platform.x = x - platform.width / 2;
+      if (platform.x < 0) platform.x = 0;
+      if (platform.x + platform.width > canvas.width) platform.x = canvas.width - platform.width;
+    });
+
+    // === Кнопки меню ===
+    document.getElementById('btn-levels').onclick = () => startGame(false);
+    document.getElementById('btn-endless').onclick = () => startGame(true);
+
+    // Показать лучший счёт
+    document.getElementById('best-score').innerText = `Лучший счёт: ${progress.bestEndlessScore}`;
+  </script>
 </body>
 </html>
